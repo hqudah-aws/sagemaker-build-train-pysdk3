@@ -25,7 +25,15 @@ bash push.sh --env .env.docker.stablediffusion
 
 These scripts handle ECR authentication, repository creation, and image pushing automatically.
 
-### 2. Open the Notebook
+### 2. Prepare Stable Diffusion Training Data
+
+If running the Stable Diffusion example, run this script to pull a sample dataset from HuggingFace and upload it to S3:
+
+```bash
+python prepare_sd_data.py
+```
+
+### 3. Open the Notebook
 
 Open `script_mode_sdkv3_blog (1).ipynb` and follow along. The notebook covers:
 
