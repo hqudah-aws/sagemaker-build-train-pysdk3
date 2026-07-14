@@ -1,0 +1,58 @@
+# Model
+pretrained_model_name_or_path: stabilityai/stable-diffusion-3.5-large
+# clip_model_name_or_path_G: laion/CLIP-ViT-bigG-14-laion2B-39B-b160k
+# clip_model_name_or_path_L: laion/CLIP-ViT-L-14-laion2B-s32B-b82K
+
+
+
+# variant: medium
+
+# Dataset
+#dataset_name: /home/sagemaker-user/diffusion/diffusion-transfomer/gz_image_caption_dataset
+train_data_dir: /home/sagemaker-user/diffusion-transfomer/gz_image_caption_dataset
+dataloader_num_workers: 1
+#max_train_samples: 1000
+
+# Text processing
+max_sequence_length: 128
+# Image processing
+resolution: 128
+center_crop: false
+random_flip: true
+
+#LoRA
+train_text_encoder: false
+rank: 4
+lora_layers: attn.add_k_proj, attn.add_q_proj, attn.add_v_proj, attn.to_add_out, attn.to_k, attn.to_out.0, attn.to_q, attn.to_v, ff.net
+
+# Training
+train_batch_size: 1
+gradient_accumulation_steps: 2
+max_train_steps: 150
+
+# Validation
+num_validation_images: 1
+
+learning_rate: 1.0e-4
+max_grad_norm: 1.0
+lr_scheduler: cosine
+lr_warmup_steps: 0
+
+use_8bit_adam: true
+
+# Output
+output_dir: OUTPUT_DIR
+
+# Validation
+validation_prompt: "a boy Malcom and his dog Ben"
+
+# Checkpointing
+checkpointing_steps: 500
+
+# Logging
+report_to: wandb
+seed: 111
+
+# Hub
+push_to_hub: false
+hub_model_id: ""

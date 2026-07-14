@@ -1,0 +1,20 @@
+model_package_arn: "arn:aws:sagemaker:us-west-2:781297242028:model-package/my-model-package-group/28"
+model_name: MyTestModel6
+
+# Code
+source_code_dir: ./deploy/random_forest
+entry_script: inference.py
+
+# Compute
+image_uri: 763104351884.dkr.ecr.us-west-2.amazonaws.com/djl-inference:0.36.0-cpu-full
+instance_type: ml.m5.2xlarge
+instance_count: 1
+
+# SERIALIZER=array # csv, json, string, array, tensor, bytes
+# DESERIALIZER=json # json, string, dataframe, array, tensor, bytes
+
+# TORCHSERVE, MMS, TENSORFLOW_SERVING, DJL_SERVING, TRITON, TGI, and TEI
+model_server: DJL_SERVING
+
+# Permissions
+sagemaker_execution_role: "arn:aws:iam::781297242028:role/service-role/AmazonSageMaker-ExecutionRole-20200630T141851"
