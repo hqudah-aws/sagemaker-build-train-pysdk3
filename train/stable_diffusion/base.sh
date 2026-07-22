@@ -156,6 +156,51 @@ install_dependencies() {
 }
 
 ############################################
+# Secrets (fetch from AWS Secrets Manager)
+############################################
+# If SECRETS_ARN is set (passed via the ModelTrainer `environment` parameter),
+# fetch the JSON secret and export each key as an environment variable so
+# downstream tools pick them up automatically — e.g. HF_TOKEN for the gated
+# Stable Diffusion 3.5 model download, and WANDB_API_KEY for W&B logging.
+#
+# Passing the ARN (not the raw tokens) keeps secrets out of the job definition,
+# the notebook, and CloudTrail. The execution role just needs
+# secretsmanager:GetSecretValue on this secret. boto3 is already present in the
+# training image (pulled in by sagemaker-mlflow).
+load_secrets() {
+    if [[ -z "${SECRETS_ARN:-}" ]]; then
+        log_info "No SECRETS_ARN provided; skipping Secrets Manager fetch."
+        return
+    fi
+
+    log_info "Fetching secrets from Secrets Manager: ${SECRETS_ARN}"
+    local secrets_file keys
+    secrets_file="$(mktemp)"
+
+    # Python writes 'export KEY=value' lines to a temp file (never to stdout, so
+    # secret values never land in the logs) and prints only the key names.
+    keys="$(python3 - "$SECRETS_ARN" "$secrets_file" <<'PY'
+import json, shlex, sys
+import boto3
+
+arn, out_path = sys.argv[1], sys.argv[2]
+region = arn.split(":")[3]  # region is embedded in the ARN
+client = boto3.client("secretsmanager", region_name=region)
+secret = json.loads(client.get_secret_value(SecretId=arn)["SecretString"])
+with open(out_path, "w") as f:
+    for key, value in secret.items():
+        f.write(f"export {key}={shlex.quote(str(value))}\n")
+print(", ".join(secret.keys()))  # key names only — safe to log
+PY
+)"
+
+    # shellcheck disable=SC1090
+    source "$secrets_file"
+    rm -f "$secrets_file"
+    log_success "Exported secrets as environment variables: ${keys}"
+}
+
+############################################
 # Accelerate presence (binary or importable)
 ############################################
 check_accelerate_installation() {
@@ -306,6 +351,7 @@ launch_training() {
 main() {
     parse_arguments "$@"
     install_dependencies
+    load_secrets
     validate_inputs
     setup_distributed_environment
     set_dynamic_rdzv_backend

@@ -33,7 +33,39 @@ If running the Stable Diffusion example, run this script to pull a sample datase
 python prepare_sd_data.py
 ```
 
-### 3. Open the Notebook
+### 3. Set Up Secrets (Stable Diffusion example)
+
+The Stable Diffusion example needs two secrets at runtime: a **Hugging Face token** (`HF_TOKEN`) with access to the gated Stable Diffusion 3.5 Medium repo, and an optional **Weights & Biases API key** (`WANDB_API_KEY`) for experiment logging.
+
+Rather than hardcoding these tokens in the notebook — where they would end up in the training job definition and CloudTrail — store them once in **AWS Secrets Manager** and pass only the secret's **ARN** to the training job. At runtime, `base.sh` fetches the secret and exports each key as an environment variable inside the container, so the raw tokens never leave Secrets Manager.
+
+Deploy the included CloudFormation template (`cloudformation/training-secrets.yaml`) with your real token values:
+
+```bash
+aws cloudformation deploy \
+  --template-file cloudformation/training-secrets.yaml \
+  --stack-name script-mode-blog-secrets \
+  --parameter-overrides \
+      HuggingFaceToken=hf_your_real_token_here \
+      WandbApiKey=your_wandb_key_here \
+  --capabilities CAPABILITY_IAM \
+  --region us-east-2
+```
+
+The stack creates the secret (a JSON object `{"HF_TOKEN": "...", "WANDB_API_KEY": "..."}`) and an IAM managed policy that grants read access to it. Fetch the outputs:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name script-mode-blog-secrets \
+  --region us-east-2 \
+  --query "Stacks[0].Outputs" --output table
+```
+
+Then attach the `SecretReadPolicyArn` managed policy to your SageMaker execution role (so the training job can read the secret), and copy the `SecretArn` value into the `SECRETS_ARN` variable in the notebook's Stable Diffusion configuration cell.
+
+> **Note:** If your execution role uses `AmazonSageMakerFullAccess`, it can already read secrets whose names begin with `AmazonSageMaker-` (the template's default name does), so attaching the managed policy is optional in that case.
+
+### 4. Open the Notebook
 
 Open `script_mode_sdkv3_blog (1).ipynb` and follow along. The notebook covers:
 
@@ -83,7 +115,7 @@ sd_model_trainer = ModelTrainer(
     training_image=SD_TRAINING_IMAGE_URI,
     source_code=sd_source_code,
     compute=Compute(instance_type="ml.g5.12xlarge", instance_count=1),  # 4x A10G GPUs
-    environment={"HF_TOKEN": HF_TOKEN},
+    environment={"SECRETS_ARN": SECRETS_ARN},  # base.sh fetches HF_TOKEN / WANDB_API_KEY at runtime
     role=SAGEMAKER_EXECUTION_ROLE,
 )
 
