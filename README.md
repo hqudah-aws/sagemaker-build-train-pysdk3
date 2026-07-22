@@ -152,9 +152,7 @@ predictor = model.deploy(instance_type="ml.m5.xlarge", initial_instance_count=1)
 │   └── stable_diffusion/
 ├── train/                   # Training scripts and configs
 │   ├── random_forest/       # Scikit-learn training script
-│   ├── stable_diffusion/    # LoRA fine-tuning script + accelerate configs
-│   ├── train.randomforest.yaml
-│   └── train.stablediffusion.yaml
+│   └── stable_diffusion/    # LoRA fine-tuning script + accelerate configs
 ├── deploy/                  # Inference handlers
 │   ├── random_forest/
 │   └── stable_diffusion/
