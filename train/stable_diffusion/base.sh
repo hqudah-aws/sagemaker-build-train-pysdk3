@@ -346,6 +346,25 @@ launch_training() {
 }
 
 ############################################
+# Stage serving artifacts into the model dir
+############################################
+# Copy the inference-time requirements into $SM_MODEL_DIR so they land at the
+# ROOT of model.tar.gz. The DJL Serving inference container installs a
+# root-level requirements.txt at startup (it ignores one nested under code/),
+# which is how our inference handler gets boto3 + diffusers at deploy time.
+# This keeps the model artifact self-contained: weights + the deps to serve them.
+stage_serving_artifacts() {
+    local model_dir="${SM_MODEL_DIR:-/opt/ml/model}"
+    local reqs="${SCRIPT_DIR}/serving-requirements.txt"
+    if [[ -f "$reqs" ]]; then
+        cp "$reqs" "${model_dir}/requirements.txt"
+        log_success "Staged serving requirements.txt into ${model_dir} (packaged at model.tar.gz root)"
+    else
+        log_warning "No serving-requirements.txt found at ${reqs}; skipping."
+    fi
+}
+
+############################################
 # Main
 ############################################
 main() {
@@ -364,6 +383,7 @@ main() {
     check_accelerate_installation
     verify_accelerate_config
     launch_training
+    stage_serving_artifacts
 
     log_success "All steps completed successfully"
 }

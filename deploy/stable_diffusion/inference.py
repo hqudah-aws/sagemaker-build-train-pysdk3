@@ -2,10 +2,29 @@ import json
 import os
 import io
 import base64
+import boto3
 import torch
 from djl_python import Input, Output
 
 _pipeline = None
+
+
+def _load_secrets_from_arn():
+    """
+    If SECRETS_ARN is set (passed via ModelBuilder env_vars), fetch the JSON
+    secret from Secrets Manager and export each key as an environment variable.
+    This is the same ARN-based pattern used for training in base.sh — it lets
+    the endpoint authenticate the gated Stable Diffusion 3.5 base-model download
+    (HF_TOKEN) without the raw token appearing in the notebook or model config.
+    """
+    secret_arn = os.environ.get("SECRETS_ARN")
+    if not secret_arn:
+        return
+    region = secret_arn.split(":")[3]  # region is embedded in the ARN
+    client = boto3.client("secretsmanager", region_name=region)
+    secret = json.loads(client.get_secret_value(SecretId=secret_arn)["SecretString"])
+    for key, value in secret.items():
+        os.environ.setdefault(key, value)
 
 
 def handle(inputs: Input) -> Output:
@@ -30,6 +49,10 @@ def handle(inputs: Input) -> Output:
     if inputs.is_empty():
         properties = inputs.get_properties()
         model_dir = properties.get("model_dir", "/opt/ml/model")
+
+        # Export HF_TOKEN (etc.) from Secrets Manager so the gated base-model
+        # download below can authenticate.
+        _load_secrets_from_arn()
 
         from diffusers import StableDiffusion3Pipeline
 
