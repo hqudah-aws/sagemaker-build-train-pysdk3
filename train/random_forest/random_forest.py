@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
 import argparse
+import boto3
 import joblib
+import json
 import os
 import sys
 from sklearn.datasets import fetch_openml
@@ -30,8 +32,43 @@ def parse_args():
     parser.add_argument("--n_estimators", type=int, default=120)
     parser.add_argument("--mlflow_arn", type=str, default=None)
     parser.add_argument("--mlflow_experiment_name", type=str, default="Default")
+    # ARN of the Secrets Manager secret holding HF_TOKEN / WANDB_API_KEY.
+    # Can also be provided via the SECRETS_ARN environment variable, which is how
+    # the notebook passes it (ModelTrainer environment={"SECRETS_ARN": ...}).
+    parser.add_argument(
+        "--secrets_arn", type=str, default=os.environ.get("SECRETS_ARN")
+    )
 
     return parser.parse_known_args()
+
+
+def load_secrets_from_arn(secret_arn):
+    """
+    Fetch a JSON secret from AWS Secrets Manager and export each key as an
+    environment variable, so downstream libraries (e.g. Hugging Face, Weights &
+    Biases) pick them up automatically.
+
+    The secret is expected to be a JSON object, e.g.:
+        {"HF_TOKEN": "hf_...", "WANDB_API_KEY": "..."}
+
+    Passing the secret ARN (instead of the raw values) keeps secrets out of the
+    job definition, notebook, and CloudTrail. The training job's execution role
+    just needs secretsmanager:GetSecretValue on this secret.
+    """
+    # The AWS region is embedded in the ARN, so we can build a client that
+    # points at the right region even if it differs from the job's default.
+    region = secret_arn.split(":")[3]
+    client = boto3.client("secretsmanager", region_name=region)
+    secret_string = client.get_secret_value(SecretId=secret_arn)["SecretString"]
+    secrets = json.loads(secret_string)
+
+    for key, value in secrets.items():
+        os.environ[key] = value
+        # NOTE: printing secret values is for VALIDATION ONLY. Remove this in
+        # production — never log secret material to CloudWatch.
+        print(f"[secrets] exported {key} from Secrets Manager (value: {value})")
+
+    return secrets
 
 
 def start(args):
@@ -77,6 +114,16 @@ def start(args):
 
 if __name__ == "__main__":
     args, _ = parse_args()
+
+    # Load secrets from Secrets Manager (if an ARN was provided) and export them
+    # as environment variables before anything else runs. In Example 1 this is
+    # purely to validate the pattern; the same approach lets Example 2 fetch a
+    # gated Hugging Face model and log to Weights & Biases.
+    if args.secrets_arn:
+        load_secrets_from_arn(args.secrets_arn)
+    else:
+        print("[secrets] no --secrets_arn / SECRETS_ARN provided; skipping")
+
     mlflow.set_tracking_uri(args.mlflow_arn)
     mlflow.set_experiment(args.mlflow_experiment_name)
     mlflow.autolog()
