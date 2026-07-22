@@ -26,6 +26,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NUM_GPUS=""                # per machine (input); we’ll also compute totals
 CONFIG_PATH=""
 RUN_EVAL=false
+MLFLOW_ARN=""              # SageMaker managed MLflow tracking server ARN (optional)
+MLFLOW_EXPERIMENT_NAME=""  # MLflow experiment name (optional)
 
 # Repo-local assets (absolute)
 REQUIREMENTS_FILE="${SCRIPT_DIR}/requirements.txt"
@@ -85,6 +87,8 @@ parse_arguments() {
             --config)      CONFIG_PATH="${2:-}"; shift 2 ;;
             --accelerate-config)   ACCELERATE_CONFIG="${2:-}"; shift 2 ;;
             --training-script)    TRAINING_SCRIPT="${2:-}"; shift 2 ;;
+            --mlflow-arn)          MLFLOW_ARN="${2:-}"; shift 2 ;;
+            --mlflow-experiment-name)  MLFLOW_EXPERIMENT_NAME="${2:-}"; shift 2 ;;
             --help|-h)     show_usage; exit 0 ;;
             *)             log_error "Unknown argument: $1"; show_usage; exit 1 ;;
         esac
@@ -326,6 +330,15 @@ launch_training() {
     log_info "  - Num machines: $NUM_MACHINES"
     log_info "  - Total processes: $TOTAL_PROCS"
 
+    # Forward MLflow settings to the training script only when provided, so runs
+    # log to the SageMaker managed MLflow tracking server (see mlflow_arn handling
+    # in the training script). Left empty -> training falls back to local tracking.
+    local mlflow_args=()
+    if [[ -n "$MLFLOW_ARN" ]]; then
+        mlflow_args+=(--mlflow_arn "$MLFLOW_ARN")
+        [[ -n "$MLFLOW_EXPERIMENT_NAME" ]] && mlflow_args+=(--mlflow_experiment_name "$MLFLOW_EXPERIMENT_NAME")
+    fi
+
     # minimal: pass TOTAL_PROCS (matches 'questionnaire' semantics) and keep topology flags
     if accelerate launch \
         --config_file "$ACCELERATE_CONFIG" \
@@ -335,7 +348,8 @@ launch_training() {
         --main_process_ip "$MASTER_ADDR" \
         --main_process_port "$MASTER_PORT" \
         "$TRAINING_SCRIPT" \
-        --config "$CONFIG_PATH"
+        --config "$CONFIG_PATH" \
+        ${mlflow_args[@]+"${mlflow_args[@]}"}
     then
         log_success "Training completed successfully!"
     else
