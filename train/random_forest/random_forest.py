@@ -4,10 +4,11 @@ import argparse
 import joblib
 import os
 import sys
-from sklearn.datasets import load_diabetes
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
+from sklearn.datasets import fetch_openml
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 import mlflow
 import sagemaker_mlflow  # noqa: F401
 import logging
@@ -35,11 +36,16 @@ def parse_args():
 
 def start(args):
     """
-    Train a Random Forest Regressor
+    Train a Random Forest Classifier
     """
 
-    # Load example dataset (diabetes regression)
-    X, y = load_diabetes(return_X_y=True)
+    # Load example dataset (Pima Indians Diabetes, binary classification).
+    # OpenML dataset id 37; features are 8 numeric clinical measurements and
+    # the target is tested_positive / tested_negative for diabetes.
+    X, y = fetch_openml(data_id=37, as_frame=False, return_X_y=True)
+
+    # Encode the string target labels into 0/1 for the classifier
+    y = LabelEncoder().fit_transform(y)
 
     # Alternatively read data from os.environ.get("SM_INPUT_DATA_DIR")
 
@@ -55,15 +61,15 @@ def start(args):
         "n_estimators": args.n_estimators,
     }
 
-    model = RandomForestRegressor()
+    model = RandomForestClassifier()
     model.set_params(**hyperparameters)
     model.fit(X_train, y_train)
 
     # Metrics we care about
-    r_squared = model.score(X_validation, y_validation)
-    print("r-squared: {}".format(r_squared))
-    mse = mean_squared_error(y_validation, model.predict(X_validation))
-    print("MSE: {}".format(mse))
+    accuracy = model.score(X_validation, y_validation)
+    print("accuracy: {}".format(accuracy))
+    f1 = f1_score(y_validation, model.predict(X_validation))
+    print("F1: {}".format(f1))
 
     # Save the model
     joblib.dump(model, os.path.join(os.environ["SM_MODEL_DIR"], "model.joblib"))

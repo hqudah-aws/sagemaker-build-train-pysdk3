@@ -9,7 +9,7 @@ mixed_precision: bf16
 downcast_bf16: 'no'
 rdzv_backend: static
 same_network: true
-use_cpu: true
+use_cpu: false
 tpu_env: []
 tpu_use_cluster: false
 tpu_use_sudo: false

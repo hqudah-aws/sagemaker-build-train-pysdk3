@@ -26,6 +26,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NUM_GPUS=""                # per machine (input); we’ll also compute totals
 CONFIG_PATH=""
 RUN_EVAL=false
+MLFLOW_ARN=""              # SageMaker managed MLflow tracking server ARN (optional)
+MLFLOW_EXPERIMENT_NAME=""  # MLflow experiment name (optional)
 
 # Repo-local assets (absolute)
 REQUIREMENTS_FILE="${SCRIPT_DIR}/requirements.txt"
@@ -85,6 +87,8 @@ parse_arguments() {
             --config)      CONFIG_PATH="${2:-}"; shift 2 ;;
             --accelerate-config)   ACCELERATE_CONFIG="${2:-}"; shift 2 ;;
             --training-script)    TRAINING_SCRIPT="${2:-}"; shift 2 ;;
+            --mlflow-arn)          MLFLOW_ARN="${2:-}"; shift 2 ;;
+            --mlflow-experiment-name)  MLFLOW_EXPERIMENT_NAME="${2:-}"; shift 2 ;;
             --help|-h)     show_usage; exit 0 ;;
             *)             log_error "Unknown argument: $1"; show_usage; exit 1 ;;
         esac
@@ -153,6 +157,51 @@ install_dependencies() {
     if ! command -v yq &> /dev/null; then
         uv pip install --system yq || { log_error "Failed to install yq"; exit 1; }
     fi
+}
+
+############################################
+# Secrets (fetch from AWS Secrets Manager)
+############################################
+# If SECRETS_ARN is set (passed via the ModelTrainer `environment` parameter),
+# fetch the JSON secret and export each key as an environment variable so
+# downstream tools pick them up automatically — e.g. HF_TOKEN for the gated
+# Stable Diffusion 3.5 model download, and WANDB_API_KEY for W&B logging.
+#
+# Passing the ARN (not the raw tokens) keeps secrets out of the job definition,
+# the notebook, and CloudTrail. The execution role just needs
+# secretsmanager:GetSecretValue on this secret. boto3 is already present in the
+# training image (pulled in by sagemaker-mlflow).
+load_secrets() {
+    if [[ -z "${SECRETS_ARN:-}" ]]; then
+        log_info "No SECRETS_ARN provided; skipping Secrets Manager fetch."
+        return
+    fi
+
+    log_info "Fetching secrets from Secrets Manager: ${SECRETS_ARN}"
+    local secrets_file keys
+    secrets_file="$(mktemp)"
+
+    # Python writes 'export KEY=value' lines to a temp file (never to stdout, so
+    # secret values never land in the logs) and prints only the key names.
+    keys="$(python3 - "$SECRETS_ARN" "$secrets_file" <<'PY'
+import json, shlex, sys
+import boto3
+
+arn, out_path = sys.argv[1], sys.argv[2]
+region = arn.split(":")[3]  # region is embedded in the ARN
+client = boto3.client("secretsmanager", region_name=region)
+secret = json.loads(client.get_secret_value(SecretId=arn)["SecretString"])
+with open(out_path, "w") as f:
+    for key, value in secret.items():
+        f.write(f"export {key}={shlex.quote(str(value))}\n")
+print(", ".join(secret.keys()))  # key names only — safe to log
+PY
+)"
+
+    # shellcheck disable=SC1090
+    source "$secrets_file"
+    rm -f "$secrets_file"
+    log_success "Exported secrets as environment variables: ${keys}"
 }
 
 ############################################
@@ -281,6 +330,15 @@ launch_training() {
     log_info "  - Num machines: $NUM_MACHINES"
     log_info "  - Total processes: $TOTAL_PROCS"
 
+    # Forward MLflow settings to the training script only when provided, so runs
+    # log to the SageMaker managed MLflow tracking server (see mlflow_arn handling
+    # in the training script). Left empty -> training falls back to local tracking.
+    local mlflow_args=()
+    if [[ -n "$MLFLOW_ARN" ]]; then
+        mlflow_args+=(--mlflow_arn "$MLFLOW_ARN")
+        [[ -n "$MLFLOW_EXPERIMENT_NAME" ]] && mlflow_args+=(--mlflow_experiment_name "$MLFLOW_EXPERIMENT_NAME")
+    fi
+
     # minimal: pass TOTAL_PROCS (matches 'questionnaire' semantics) and keep topology flags
     if accelerate launch \
         --config_file "$ACCELERATE_CONFIG" \
@@ -290,7 +348,8 @@ launch_training() {
         --main_process_ip "$MASTER_ADDR" \
         --main_process_port "$MASTER_PORT" \
         "$TRAINING_SCRIPT" \
-        --config "$CONFIG_PATH"
+        --config "$CONFIG_PATH" \
+        ${mlflow_args[@]+"${mlflow_args[@]}"}
     then
         log_success "Training completed successfully!"
     else
@@ -301,11 +360,31 @@ launch_training() {
 }
 
 ############################################
+# Stage serving artifacts into the model dir
+############################################
+# Copy the inference-time requirements into $SM_MODEL_DIR so they land at the
+# ROOT of model.tar.gz. The DJL Serving inference container installs a
+# root-level requirements.txt at startup (it ignores one nested under code/),
+# which is how our inference handler gets boto3 + diffusers at deploy time.
+# This keeps the model artifact self-contained: weights + the deps to serve them.
+stage_serving_artifacts() {
+    local model_dir="${SM_MODEL_DIR:-/opt/ml/model}"
+    local reqs="${SCRIPT_DIR}/serving-requirements.txt"
+    if [[ -f "$reqs" ]]; then
+        cp "$reqs" "${model_dir}/requirements.txt"
+        log_success "Staged serving requirements.txt into ${model_dir} (packaged at model.tar.gz root)"
+    else
+        log_warning "No serving-requirements.txt found at ${reqs}; skipping."
+    fi
+}
+
+############################################
 # Main
 ############################################
 main() {
     parse_arguments "$@"
     install_dependencies
+    load_secrets
     validate_inputs
     setup_distributed_environment
     set_dynamic_rdzv_backend
@@ -318,6 +397,7 @@ main() {
     check_accelerate_installation
     verify_accelerate_config
     launch_training
+    stage_serving_artifacts
 
     log_success "All steps completed successfully"
 }

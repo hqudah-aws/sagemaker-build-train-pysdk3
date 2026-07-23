@@ -293,6 +293,8 @@ def parse_args():
     parser.add_argument("--logging_dir", type=str, default="logs", help="TensorBoard log directory.")
     parser.add_argument("--mixed_precision", type=str, choices=["no", "fp16", "bf16"], default=None, help="Mixed precision.")
     parser.add_argument("--report_to", type=str, default="tensorboard", help="Report to integration.")
+    parser.add_argument("--mlflow_arn", type=str, default=None, help="SageMaker managed MLflow tracking server ARN. If set, runs log here instead of a local ./mlruns.")
+    parser.add_argument("--mlflow_experiment_name", type=str, default="Default", help="MLflow experiment name.")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training.")
     parser.add_argument("--checkpointing_steps", type=int, default=500, help="Checkpointing frequency.")
     parser.add_argument("--checkpoints_total_limit", type=int, default=None, help="Max checkpoints to store.")
@@ -367,12 +369,20 @@ def parse_args():
 def main():
     
     args = parse_args()
-    
+
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
             "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
             " Please use `hf auth login` to authenticate with the Hub."
         )
+
+    # Point MLflow at the SageMaker managed tracking server (if an ARN was given)
+    # BEFORE the Accelerator initializes its trackers. Accelerate's MLflow tracker
+    # reads these environment variables; without them, report_to=mlflow logs to an
+    # ephemeral local ./mlruns dir inside the container that is lost when the job ends.
+    if args.mlflow_arn:
+        os.environ["MLFLOW_TRACKING_URI"] = args.mlflow_arn
+        os.environ["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
 
     logging_dir = Path(args.output_dir, args.logging_dir)
 

@@ -25,22 +25,49 @@ bash push.sh --env .env.docker.stablediffusion
 
 These scripts handle ECR authentication, repository creation, and image pushing automatically.
 
-### 2. Prepare Stable Diffusion Training Data
+### 2. Set Up Secrets (Stable Diffusion example)
 
-If running the Stable Diffusion example, run this script to pull a sample dataset from HuggingFace and upload it to S3:
+The Stable Diffusion example needs one secret at runtime: a **Hugging Face token** (`HF_TOKEN`) with access to the gated Stable Diffusion 3.5 Medium repo, used to download the base model. (The secret also has an optional `WANDB_API_KEY` slot in case you prefer Weights & Biases, but it isn't needed for the default flow, which tracks experiments with the SageMaker managed MLflow server — see below.)
+
+Rather than hardcoding this token in the notebook — where it would end up in the training job definition and CloudTrail — store it in **AWS Secrets Manager** and pass only the secret's **ARN** to the training job. At runtime, `base.sh` fetches the secret and exports each key as an environment variable inside the container, so the raw token never leaves Secrets Manager.
+
+Deploy the included CloudFormation template (`cloudformation/training-secrets.yaml`) with your real Hugging Face token:
 
 ```bash
-python prepare_sd_data.py
+aws cloudformation deploy \
+  --template-file cloudformation/training-secrets.yaml \
+  --stack-name script-mode-blog-secrets \
+  --parameter-overrides \
+      HuggingFaceToken=hf_your_real_token_here \
+      WandbApiKey=dummy_not_used_with_mlflow \
+  --capabilities CAPABILITY_IAM
 ```
+
+> These commands run in your AWS CLI's default region. Add `--region <region>` to
+> target a specific one — it must match the region your notebook runs in, since the
+> training job looks up the secret by ARN in that region.
+
+The stack creates the secret (a JSON object `{"HF_TOKEN": "...", "WANDB_API_KEY": "..."}`) and an IAM managed policy that grants read access to it. Fetch the outputs:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name script-mode-blog-secrets \
+  --query "Stacks[0].Outputs" --output table
+```
+
+Then attach the `SecretReadPolicyArn` managed policy to your SageMaker execution role (so the training job can read the secret), and copy the `SecretArn` value into the `SECRETS_ARN` variable in the notebook's Stable Diffusion configuration cell.
+
+> **Note:** If your execution role uses `AmazonSageMakerFullAccess`, it can already read secrets whose names begin with `AmazonSageMaker-` (the template's default name does), so attaching the managed policy is optional in that case.
 
 ### 3. Open the Notebook
 
 Open `script_mode_sdkv3_blog (1).ipynb` and follow along. The notebook covers:
 
 - Configuring training jobs with YAML recipe files
+- Preparing the Stable Diffusion training data (a notebook cell pulls a sample dataset from Hugging Face and uploads it to S3 — no separate script to run)
 - Launching training with `ModelTrainer` and `SourceCode`
 - Deploying models to real-time endpoints with `ModelBuilder`
-- (Optional) MLflow experiment tracking
+- Experiment tracking with the SageMaker managed MLflow server
 
 ## How It Works
 
@@ -76,6 +103,8 @@ sd_source_code = SourceCode(
         " --config recipes/default-medium-g5_12x.yaml"
         " --training-script train_text_to_image_lora.py"
         " --accelerate-config accelerate_configs/ddp.yaml"
+        f" --mlflow-arn {SD_MLFLOW_ARN}"  # log to the SageMaker managed MLflow server
+        f" --mlflow-experiment-name {SD_MLFLOW_EXPERIMENT_NAME}"
     ),
 )
 
@@ -83,7 +112,7 @@ sd_model_trainer = ModelTrainer(
     training_image=SD_TRAINING_IMAGE_URI,
     source_code=sd_source_code,
     compute=Compute(instance_type="ml.g5.12xlarge", instance_count=1),  # 4x A10G GPUs
-    environment={"HF_TOKEN": HF_TOKEN},
+    environment={"SECRETS_ARN": SECRETS_ARN},  # base.sh fetches HF_TOKEN from Secrets Manager at runtime
     role=SAGEMAKER_EXECUTION_ROLE,
 )
 
@@ -120,15 +149,12 @@ predictor = model.deploy(instance_type="ml.m5.xlarge", initial_instance_count=1)
 │   └── stable_diffusion/
 ├── train/                   # Training scripts and configs
 │   ├── random_forest/       # Scikit-learn training script
-│   ├── stable_diffusion/    # LoRA fine-tuning script + accelerate configs
-│   ├── train.randomforest.yaml
-│   └── train.stablediffusion.yaml
+│   └── stable_diffusion/    # LoRA fine-tuning script + accelerate configs
 ├── deploy/                  # Inference handlers
 │   ├── random_forest/
 │   └── stable_diffusion/
 ├── build.sh                 # Build Docker image locally
-├── push.sh                  # Push Docker image to ECR
-└── prepare_sd_data.py       # Prepare Stable Diffusion training data
+└── push.sh                  # Push Docker image to ECR
 ```
 
 ## Prerequisites
