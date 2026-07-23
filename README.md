@@ -40,16 +40,18 @@ aws cloudformation deploy \
   --parameter-overrides \
       HuggingFaceToken=hf_your_real_token_here \
       WandbApiKey=dummy_not_used_with_mlflow \
-  --capabilities CAPABILITY_IAM \
-  --region us-east-2
+  --capabilities CAPABILITY_IAM
 ```
+
+> These commands run in your AWS CLI's default region. Add `--region <region>` to
+> target a specific one — it must match the region your notebook runs in, since the
+> training job looks up the secret by ARN in that region.
 
 The stack creates the secret (a JSON object `{"HF_TOKEN": "...", "WANDB_API_KEY": "..."}`) and an IAM managed policy that grants read access to it. Fetch the outputs:
 
 ```bash
 aws cloudformation describe-stacks \
   --stack-name script-mode-blog-secrets \
-  --region us-east-2 \
   --query "Stacks[0].Outputs" --output table
 ```
 
