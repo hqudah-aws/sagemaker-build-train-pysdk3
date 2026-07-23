@@ -61,7 +61,7 @@ Then attach the `SecretReadPolicyArn` managed policy to your SageMaker execution
 
 ### 3. Open the Notebook
 
-Open `script_mode_sdkv3_blog (1).ipynb` and follow along. The notebook covers:
+Open `script_mode_sdkv3_blog.ipynb` and follow along. The notebook covers:
 
 - Configuring training jobs with YAML recipe files
 - Preparing the Stable Diffusion training data (a notebook cell pulls a sample dataset from Hugging Face and uploads it to S3 — no separate script to run)
