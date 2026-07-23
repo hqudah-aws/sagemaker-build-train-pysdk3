@@ -11,6 +11,18 @@ set -a
 source "docker/$ENV_FILE"
 set +a
 
+# If AWS_REGION is empty, resolve it from the standard AWS chain so this repo
+# runs in any region without editing the env file.
+if [ -z "$AWS_REGION" ]; then
+    AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region)}}"
+    export AWS_REGION
+fi
+if [ -z "$AWS_REGION" ]; then
+    echo "✗ Could not determine AWS region. Set AWS_REGION in the env file," >&2
+    echo "  export AWS_DEFAULT_REGION, or run 'aws configure set region <region>'." >&2
+    exit 1
+fi
+
 # If AWS_ACCOUNT_ID is empty, fetch it
 if [ -z "$AWS_ACCOUNT_ID" ]; then
     AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
