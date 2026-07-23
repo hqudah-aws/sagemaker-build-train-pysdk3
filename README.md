@@ -25,21 +25,13 @@ bash push.sh --env .env.docker.stablediffusion
 
 These scripts handle ECR authentication, repository creation, and image pushing automatically.
 
-### 2. Prepare Stable Diffusion Training Data
+### 2. Set Up Secrets (Stable Diffusion example)
 
-If running the Stable Diffusion example, run this script to pull a sample dataset from HuggingFace and upload it to S3:
+The Stable Diffusion example needs one secret at runtime: a **Hugging Face token** (`HF_TOKEN`) with access to the gated Stable Diffusion 3.5 Medium repo, used to download the base model. (The secret also has an optional `WANDB_API_KEY` slot in case you prefer Weights & Biases, but it isn't needed for the default flow, which tracks experiments with the SageMaker managed MLflow server — see below.)
 
-```bash
-python prepare_sd_data.py
-```
+Rather than hardcoding this token in the notebook — where it would end up in the training job definition and CloudTrail — store it in **AWS Secrets Manager** and pass only the secret's **ARN** to the training job. At runtime, `base.sh` fetches the secret and exports each key as an environment variable inside the container, so the raw token never leaves Secrets Manager.
 
-### 3. Set Up Secrets (Stable Diffusion example)
-
-The Stable Diffusion example needs two secrets at runtime: a **Hugging Face token** (`HF_TOKEN`) with access to the gated Stable Diffusion 3.5 Medium repo, and an optional **Weights & Biases API key** (`WANDB_API_KEY`) for experiment logging.
-
-Rather than hardcoding these tokens in the notebook — where they would end up in the training job definition and CloudTrail — store them once in **AWS Secrets Manager** and pass only the secret's **ARN** to the training job. At runtime, `base.sh` fetches the secret and exports each key as an environment variable inside the container, so the raw tokens never leave Secrets Manager.
-
-Deploy the included CloudFormation template (`cloudformation/training-secrets.yaml`) with your real token values:
+Deploy the included CloudFormation template (`cloudformation/training-secrets.yaml`) with your real Hugging Face token:
 
 ```bash
 aws cloudformation deploy \
@@ -47,7 +39,7 @@ aws cloudformation deploy \
   --stack-name script-mode-blog-secrets \
   --parameter-overrides \
       HuggingFaceToken=hf_your_real_token_here \
-      WandbApiKey=your_wandb_key_here \
+      WandbApiKey=dummy_not_used_with_mlflow \
   --capabilities CAPABILITY_IAM \
   --region us-east-2
 ```
@@ -65,14 +57,15 @@ Then attach the `SecretReadPolicyArn` managed policy to your SageMaker execution
 
 > **Note:** If your execution role uses `AmazonSageMakerFullAccess`, it can already read secrets whose names begin with `AmazonSageMaker-` (the template's default name does), so attaching the managed policy is optional in that case.
 
-### 4. Open the Notebook
+### 3. Open the Notebook
 
 Open `script_mode_sdkv3_blog (1).ipynb` and follow along. The notebook covers:
 
 - Configuring training jobs with YAML recipe files
+- Preparing the Stable Diffusion training data (a notebook cell pulls a sample dataset from Hugging Face and uploads it to S3 — no separate script to run)
 - Launching training with `ModelTrainer` and `SourceCode`
 - Deploying models to real-time endpoints with `ModelBuilder`
-- (Optional) MLflow experiment tracking
+- Experiment tracking with the SageMaker managed MLflow server
 
 ## How It Works
 
@@ -108,6 +101,8 @@ sd_source_code = SourceCode(
         " --config recipes/default-medium-g5_12x.yaml"
         " --training-script train_text_to_image_lora.py"
         " --accelerate-config accelerate_configs/ddp.yaml"
+        f" --mlflow-arn {SD_MLFLOW_ARN}"  # log to the SageMaker managed MLflow server
+        f" --mlflow-experiment-name {SD_MLFLOW_EXPERIMENT_NAME}"
     ),
 )
 
@@ -115,7 +110,7 @@ sd_model_trainer = ModelTrainer(
     training_image=SD_TRAINING_IMAGE_URI,
     source_code=sd_source_code,
     compute=Compute(instance_type="ml.g5.12xlarge", instance_count=1),  # 4x A10G GPUs
-    environment={"SECRETS_ARN": SECRETS_ARN},  # base.sh fetches HF_TOKEN / WANDB_API_KEY at runtime
+    environment={"SECRETS_ARN": SECRETS_ARN},  # base.sh fetches HF_TOKEN from Secrets Manager at runtime
     role=SAGEMAKER_EXECUTION_ROLE,
 )
 
@@ -157,8 +152,7 @@ predictor = model.deploy(instance_type="ml.m5.xlarge", initial_instance_count=1)
 │   ├── random_forest/
 │   └── stable_diffusion/
 ├── build.sh                 # Build Docker image locally
-├── push.sh                  # Push Docker image to ECR
-└── prepare_sd_data.py       # Prepare Stable Diffusion training data
+└── push.sh                  # Push Docker image to ECR
 ```
 
 ## Prerequisites
