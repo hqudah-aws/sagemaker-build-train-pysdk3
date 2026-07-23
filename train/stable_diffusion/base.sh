@@ -333,8 +333,11 @@ launch_training() {
     # Forward MLflow settings to the training script only when provided, so runs
     # log to the SageMaker managed MLflow tracking server (see mlflow_arn handling
     # in the training script). Left empty -> training falls back to local tracking.
+    # The notebook may interpolate Python None into the literal string "None", so
+    # treat "None" (any case) the same as empty -> skip tracking, don't forward it.
     local mlflow_args=()
-    if [[ -n "$MLFLOW_ARN" ]]; then
+    local mlflow_arn_lc="$(printf '%s' "$MLFLOW_ARN" | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$MLFLOW_ARN" && "$mlflow_arn_lc" != "none" ]]; then
         mlflow_args+=(--mlflow_arn "$MLFLOW_ARN")
         [[ -n "$MLFLOW_EXPERIMENT_NAME" ]] && mlflow_args+=(--mlflow_experiment_name "$MLFLOW_EXPERIMENT_NAME")
     fi

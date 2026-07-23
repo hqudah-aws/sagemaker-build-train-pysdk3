@@ -380,8 +380,11 @@ def main():
     # BEFORE the Accelerator initializes its trackers. Accelerate's MLflow tracker
     # reads these environment variables; without them, report_to=mlflow logs to an
     # ephemeral local ./mlruns dir inside the container that is lost when the job ends.
-    if args.mlflow_arn:
-        os.environ["MLFLOW_TRACKING_URI"] = args.mlflow_arn
+    # The ARN arrives as a string, so a disabled run shows up as "None"/"" —
+    # treat those as "skip tracking" (gate on the ARN alone).
+    mlflow_arn = (args.mlflow_arn or "").strip()
+    if mlflow_arn and mlflow_arn.lower() != "none":
+        os.environ["MLFLOW_TRACKING_URI"] = mlflow_arn
         os.environ["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
 
     logging_dir = Path(args.output_dir, args.logging_dir)

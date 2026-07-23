@@ -77,11 +77,20 @@ def start(args):
 
 if __name__ == "__main__":
     args, _ = parse_args()
-    mlflow.set_tracking_uri(args.mlflow_arn)
-    mlflow.set_experiment(args.mlflow_experiment_name)
-    mlflow.autolog()
-    # Tag SageMaker AI Training job name so we can use it to pull
-    # experiment data later if we register the model
-    mlflow.set_tag("sm_training_job_name", os.environ.get("TRAINING_JOB_NAME"))
+
+    # Experiment tracking is optional. The ARN is passed on the command line as a
+    # string, so a disabled run arrives as "None" (Python None interpolated into
+    # the command) or "" — treat those as "skip tracking". Gate on the ARN alone;
+    # the experiment name is only meaningful once a tracking server is set.
+    mlflow_arn = (args.mlflow_arn or "").strip()
+    if mlflow_arn and mlflow_arn.lower() != "none":
+        mlflow.set_tracking_uri(mlflow_arn)
+        mlflow.set_experiment(args.mlflow_experiment_name)
+        mlflow.autolog()
+        # Tag SageMaker AI Training job name so we can use it to pull
+        # experiment data later if we register the model
+        mlflow.set_tag("sm_training_job_name", os.environ.get("TRAINING_JOB_NAME"))
+    else:
+        logger.info("No MLflow ARN provided; skipping experiment tracking.")
 
     start(args)
